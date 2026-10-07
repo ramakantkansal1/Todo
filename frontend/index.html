@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Todo App</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="header-content">
+                <h1>Todo App</h1>
+                <p>"Organize your day. Get things done."</p>
+            </div>
+        </header>
+
+        <!-- Add Todo Section -->
+        <section class="add-todo-section">
+            <h2 id="formTitle">+ Add Task</h2>
+            <form id="todoForm">
+                <div class="form-group">
+                    <label for="taskTitle">Task Title</label>
+                    <input type="text" id="taskTitle" name="title" required minlength="3" placeholder="What needs to be done?">
+                </div>
+                <div class="form-group">
+                    <label for="taskDescription">Description</label>
+                    <textarea id="taskDescription" name="description" rows="3" placeholder="Add details..."></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="taskPriority">Priority</label>
+                    <select id="taskPriority" name="priority">
+                        <option value="low">Low</option>
+                        <option value="medium" selected>Medium</option>
+                        <option value="high">High</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="taskDueDate">Due Date</label>
+                    <input type="date" id="taskDueDate" name="dueDate">
+                </div>
+                <div class="form-actions">
+                    <button type="submit" class="add-btn" id="submitBtn">+ Add Task</button>
+                    <button type="button" class="cancel-btn" id="cancelBtn" style="display: none;">Cancel</button>
+                </div>
+            </form>
+        </section>
+
+        <!-- Search and Filter Section -->
+        <section class="search-filter-section">
+            <div class="search-box">
+                <input type="text" id="searchInput" placeholder="Search tasks...">
+            </div>
+            <div class="filter-tabs">
+                <button class="filter-btn active" data-filter="all">All</button>
+                <button class="filter-btn" data-filter="pending">Pending</button>
+                <button class="filter-btn" data-filter="completed">Completed</button>
+                <div class="priority-tabs">
+                    <button class="priority-btn active" data-priority="all">All</button>
+                    <button class="priority-btn" data-priority="low">Low</button>
+                    <button class="priority-btn" data-priority="medium">Medium</button>
+                    <button class="priority-btn" data-priority="high">High</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Todo List -->
+        <section class="todo-list-section" id="todoList">
+            <!-- Todos will be inserted here by JavaScript -->
+            <p class="empty-state" id="emptyState">No tasks yet. Add your first task above!</p>
+        </section>
+
+        <!-- Statistics -->
+        <section class="statistics-section">
+            <div class="stats-grid">
+                <div class="stat-item" id="totalStats">
+                    <div class="stat-number" id="totalCount">0</div>
+                    <div class="stat-label">Total Tasks</div>
+                </div>
+                <div class="stat-item" id="pendingStats">
+                    <div class="stat-number" id="pendingCount">0</div>
+                    <div class="stat-label">Pending</div>
+                </div>
+                <div class="stat-item" id="completedStats">
+                    <div class="stat-number" id="completedCount">0</div>
+                    <div class="stat-label">Completed</div>
+                </div>
+                <div class="stat-item" id="highPriorityStats">
+                    <div class="stat-number" id="highPriorityCount">0</div>
+                    <div class="stat-label">High Priority</div>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <script src="js/app.js?v=2"></script>
+</body>
+</html>
