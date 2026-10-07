@@ -1,544 +1,775 @@
-/*
- * Todo Application JavaScript
+/**
+ * Todo Application — Premium UI/UX
  * Handles communication with Flask REST API and dynamic UI updates
  */
 
 // API Base URL
 const API_BASE = '/api';
 
-// DOM Elements
-const todoForm = document.getElementById('todoForm');
-const taskTitle = document.getElementById('taskTitle');
-const taskDescription = document.getElementById('taskDescription');
-const taskPriority = document.getElementById('taskPriority');
-const taskDueDate = document.getElementById('taskDueDate');
-const searchInput = document.getElementById('searchInput');
-const todoList = document.getElementById('todoList');
-const emptyState = document.getElementById('emptyState');
-const totalStats = document.getElementById('totalCount');
-const pendingStats = document.getElementById('pendingCount');
-const completedStats = document.getElementById('completedCount');
-const highPriorityStats = document.getElementById('highPriorityCount');
-const formTitle = document.getElementById('formTitle');
-const submitBtn = document.getElementById('submitBtn');
-const cancelBtn = document.getElementById('cancelBtn');
+// ==========================================================================
+// STATE MANAGEMENT
+// ==========================================================================
+const state = {
+    allTodos: [],
+    currentFilter: 'all',
+    currentPriorityFilter: 'all',
+    searchTerm: '',
+    editingId: null,
+    deleteTargetId: null,
+    isLoading: false
+};
 
-// State
-let allTodos = [];
-let currentFilter = 'all';
-let currentPriorityFilter = 'all';
+// ==========================================================================
+// DOM ELEMENTS (cached)
+// ==========================================================================
+const elements = {};
 
-// Initialize the application
+// Initialize DOM references
+function cacheElements() {
+    elements.todoForm = document.getElementById('todoForm');
+    elements.taskTitle = document.getElementById('taskTitle');
+    elements.taskDescription = document.getElementById('taskDescription');
+    elements.taskPriority = document.getElementById('taskPriority');
+    elements.taskDueDate = document.getElementById('taskDueDate');
+    elements.searchInput = document.getElementById('searchInput');
+    elements.searchClear = document.getElementById('searchClear');
+    elements.clearSearchBtn = document.getElementById('clearSearchBtn');
+    elements.todoList = document.getElementById('todoList');
+    elements.emptyState = document.getElementById('emptyState');
+    elements.searchEmptyState = document.getElementById('searchEmptyState');
+    elements.totalCount = document.getElementById('totalCount');
+    elements.pendingCount = document.getElementById('pendingCount');
+    elements.completedCount = document.getElementById('completedCount');
+    elements.highPriorityCount = document.getElementById('highPriorityCount');
+    elements.formTitle = document.getElementById('formTitle');
+    elements.submitBtn = document.getElementById('submitBtn');
+    elements.submitBtnText = document.getElementById('submitBtnText');
+    elements.cancelBtn = document.getElementById('cancelBtn');
+    elements.formBadge = document.getElementById('formBadge');
+    elements.listMeta = document.getElementById('listMeta');
+    elements.filterAllCount = document.getElementById('filterAllCount');
+    elements.filterPendingCount = document.getElementById('filterPendingCount');
+    elements.filterCompletedCount = document.getElementById('filterCompletedCount');
+    elements.deleteModal = document.getElementById('deleteModal');
+    elements.modalClose = document.getElementById('modalClose');
+    elements.modalCancel = document.getElementById('modalCancel');
+    elements.modalConfirm = document.getElementById('modalConfirm');
+    elements.toastContainer = document.getElementById('toastContainer');
+    elements.themeToggle = document.getElementById('themeToggle');
+}
+
+// ==========================================================================
+// INITIALIZATION
+// ==========================================================================
 document.addEventListener('DOMContentLoaded', () => {
-    loadTodos();
+    cacheElements();
     setupEventListeners();
-    updateStatistics();
+    loadTodos();
+    initTheme();
 });
 
-// Load all todos from API
-async function loadTodos() {
-    try {
-        const response = await fetch(`${API_BASE}/todos`);
-        if (!response.ok) {
-            throw new Error('Failed to load todos');
+// ==========================================================================
+// THEME HANDLING (optional enhancement)
+// ==========================================================================
+function initTheme() {
+    const savedTheme = localStorage.getItem('theme');
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const isDark = savedTheme ? savedTheme === 'dark' : prefersDark;
+
+    document.documentElement.classList.toggle('dark', isDark);
+    elements.themeToggle.setAttribute('aria-pressed', isDark);
+
+    elements.themeToggle.addEventListener('click', () => {
+        const newDark = !document.documentElement.classList.contains('dark');
+        document.documentElement.classList.toggle('dark', newDark);
+        localStorage.setItem('theme', newDark ? 'dark' : 'light');
+        elements.themeToggle.setAttribute('aria-pressed', newDark);
+    });
+}
+
+// ==========================================================================
+// API COMMUNICATION
+// ==========================================================================
+async function apiRequest(url, options = {}) {
+    const defaultOptions = {
+        headers: {
+            'Content-Type': 'application/json'
         }
-        const result = await response.json();
-        // Extract the data array from the response { success, data, count }
-        allTodos = result.data;
-        renderTodos();
+    };
+
+    const mergedOptions = {
+        ...defaultOptions,
+        ...options,
+        headers: {
+            ...defaultOptions.headers,
+            ...(options.headers || {})
+        }
+    };
+
+    const response = await fetch(`${API_BASE}${url}`, mergedOptions);
+    const data = await response.json();
+
+    if (!response.ok) {
+        throw new Error(data.message || 'Request failed');
+    }
+
+    return data;
+}
+
+// ==========================================================================
+// DATA FETCHING
+// ==========================================================================
+async function loadTodos() {
+    if (state.isLoading) return;
+
+    setLoading(true);
+
+    try {
+        const result = await apiRequest('/todos');
+        state.allTodos = result.data || [];
+        renderAll();
     } catch (error) {
         console.error('Error loading todos:', error);
-        showError('Failed to load tasks. Please try again.');
+        showToast('error', 'Unable to load tasks', 'Please refresh and try again.');
+    } finally {
+        setLoading(false);
     }
 }
 
-// Render todos to the UI
-function renderTodos() {
-    // Apply filters
-    let filteredTodos = [...allTodos];
-    
+// ==========================================================================
+// RENDERING
+// ==========================================================================
+function renderAll() {
+    renderTasks();
+    renderStatistics();
+    renderFilterCounts();
+    renderListMeta();
+}
+
+function getFilteredTodos() {
+    let filtered = [...state.allTodos];
+
+    // Apply search
+    if (state.searchTerm) {
+        const term = state.searchTerm.toLowerCase();
+        filtered = filtered.filter(todo =>
+            todo.title.toLowerCase().includes(term) ||
+            (todo.description && todo.description.toLowerCase().includes(term))
+        );
+    }
+
     // Apply status filter
-    if (currentFilter !== 'all') {
-        filteredTodos = filteredTodos.filter(todo => todo.status === currentFilter);
+    if (state.currentFilter !== 'all') {
+        filtered = filtered.filter(todo => todo.status === state.currentFilter);
     }
-    
+
     // Apply priority filter
-    if (currentPriorityFilter !== 'all') {
-        filteredTodos = filteredTodos.filter(todo => todo.priority === currentPriorityFilter);
+    if (state.currentPriorityFilter !== 'all') {
+        filtered = filtered.filter(todo => todo.priority === state.currentPriorityFilter);
     }
-    
-    // Clear existing list
-    todoList.innerHTML = '';
-    
-    // If no todos match filters
+
+    return filtered;
+}
+
+function renderTasks() {
+    const filteredTodos = getFilteredTodos();
+    const hasSearch = state.searchTerm.length > 0;
+
+    // Clear list
+    elements.todoList.innerHTML = '';
+
+    // Show/hide empty states
     if (filteredTodos.length === 0) {
-        emptyState.style.display = 'block';
+        elements.emptyState.hidden = hasSearch;
+        elements.searchEmptyState.hidden = !hasSearch;
         return;
     }
-    
-    emptyState.style.display = 'none';
-    
-    // Render each todo
+
+    elements.emptyState.hidden = true;
+    elements.searchEmptyState.hidden = true;
+
+    // Render tasks
+    const fragment = document.createDocumentFragment();
     filteredTodos.forEach(todo => {
-        const todoElement = createTodoElement(todo);
-        todoList.appendChild(todoElement);
+        fragment.appendChild(createTaskElement(todo));
     });
-    
-    updateStatistics();
+    elements.todoList.appendChild(fragment);
 }
 
-// Create a todo card element
-function createTodoElement(todo) {
+function createTaskElement(todo) {
     const div = document.createElement('div');
-    div.className = `todo-card${todo.status === 'completed' ? ' completed' : ''}`;
-    div.setAttribute('data-id', todo.id);
-    div.setAttribute('data-status', todo.status);
-    
-    const priorityClass = `priority-badge.${todo.priority}`;
-    
+    div.className = 'task-card';
+    div.dataset.id = todo.id;
+    div.dataset.status = todo.status;
+    div.dataset.priority = todo.priority;
+
+    if (isOverdue(todo)) {
+        div.dataset.overdue = 'true';
+    }
+
+    const priorityClass = `priority-badge--${todo.priority}`;
+    const dueDateText = todo.due_date ? formatDate(todo.due_date) : 'No due date';
+    const dueDateFormatted = todo.due_date ? formatDateFull(todo.due_date) : '';
+
     div.innerHTML = `
-        <div class="todo-info">
-            <h3 class="todo-title">${escapeHtml(todo.title)}</h3>
-            <p class="todo-description">${todo.description ? escapeHtml(todo.description) : ''}</p>
-            <div class="todo-meta">
-                <span>Priority: <span class="priority-badge ${todo.priority}">${todo.priority.charAt(0).toUpperCase() + todo.priority.slice(1)}</span></span>
-                <span>Due: ${todo.due_date ? formatDate(todo.due_date) : 'No due date'}</span>
+        <div class="task-content">
+            <h4 class="task-title">${escapeHtml(todo.title)}</h4>
+            ${todo.description ? `<p class="task-description">${escapeHtml(todo.description)}</p>` : ''}
+            <div class="task-meta">
+                <span class="priority-badge ${priorityClass}">${todo.priority}</span>
+                <span class="task-due-date">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                        <line x1="16" y1="2" x2="16" y2="6"></line>
+                        <line x1="8" y1="2" x2="8" y2="6"></line>
+                        <line x1="3" y1="10" x2="21" y2="10"></line>
+                    </svg>
+                    <span>${dueDateText}</span>
+                </span>
             </div>
         </div>
-        <div class="todo-actions">
-            <button class="btn-complete" onclick="toggleTodo(${todo.id})">${todo.status === 'pending' ? 'Complete' : 'Undo'}</button>
-            <button class="btn-edit" onclick="editTodo(${todo.id})">Edit</button>
-            <button class="btn-delete" onclick="deleteTodo(${todo.id})">Delete</button>
+        <div class="task-actions">
+            <button
+                type="button"
+                class="task-action-btn task-action-btn--complete"
+                data-action="toggle"
+                aria-label="${todo.status === 'pending' ? 'Mark as complete' : 'Mark as pending'}"
+            >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+                    ${todo.status === 'pending'
+                        ? '<polyline points="20 6 9 17 4 12"></polyline>'
+                        : '<path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path>'
+                    }
+                </svg>
+            </button>
+            <button
+                type="button"
+                class="task-action-btn"
+                data-action="edit"
+                aria-label="Edit task"
+            >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                </svg>
+            </button>
+            <button
+                type="button"
+                class="task-action-btn task-action-btn--delete"
+                data-action="delete"
+                aria-label="Delete task"
+            >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+                    <polyline points="3 6 5 6 21 6"></polyline>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                </svg>
+            </button>
         </div>
     `;
-    
+
+    // Add event listeners to action buttons
+    div.querySelectorAll('[data-action]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            handleTaskAction(btn.dataset.action, todo.id);
+        });
+    });
+
     return div;
 }
 
-// Escape HTML special characters
+function renderStatistics() {
+    const total = state.allTodos.length;
+    const pending = state.allTodos.filter(t => t.status === 'pending').length;
+    const completed = state.allTodos.filter(t => t.status === 'completed').length;
+    const highPriority = state.allTodos.filter(t => t.priority === 'high').length;
+
+    animateCount(elements.totalCount, total);
+    animateCount(elements.pendingCount, pending);
+    animateCount(elements.completedCount, completed);
+    animateCount(elements.highPriorityCount, highPriority);
+}
+
+function renderFilterCounts() {
+    const all = state.allTodos.length;
+    const pending = state.allTodos.filter(t => t.status === 'pending').length;
+    const completed = state.allTodos.filter(t => t.status === 'completed').length;
+
+    elements.filterAllCount.textContent = all;
+    elements.filterPendingCount.textContent = pending;
+    elements.filterCompletedCount.textContent = completed;
+}
+
+function renderListMeta() {
+    const filtered = getFilteredTodos();
+    const total = state.allTodos.length;
+
+    if (state.searchTerm || state.currentFilter !== 'all' || state.currentPriorityFilter !== 'all') {
+        elements.listMeta.textContent = `${filtered.length} of ${total} tasks`;
+    } else {
+        elements.listMeta.textContent = `${total} task${total !== 1 ? 's' : ''}`;
+    }
+}
+
+// ==========================================================================
+// TASK ACTIONS
+// ==========================================================================
+function handleTaskAction(action, id) {
+    switch (action) {
+        case 'toggle':
+            toggleTodo(id);
+            break;
+        case 'edit':
+            editTodo(id);
+            break;
+        case 'delete':
+            confirmDelete(id);
+            break;
+    }
+}
+
+async function toggleTodo(id) {
+    const todo = state.allTodos.find(t => t.id === id);
+    if (!todo) return;
+
+    const btn = document.querySelector(`.task-card[data-id="${id}"] [data-action="toggle"]`);
+    const originalHtml = btn.innerHTML;
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="btn-loader"></span>';
+
+    try {
+        const result = await apiRequest(`/todos/${id}/complete`, { method: 'PATCH' });
+        state.allTodos = state.allTodos.map(t => t.id === id ? result.data : t);
+        renderAll();
+        showToast('success', 'Task updated', todo.status === 'pending' ? 'Task marked as complete' : 'Task marked as pending');
+    } catch (error) {
+        console.error('Error toggling todo:', error);
+        showToast('error', 'Unable to update task', 'Please try again.');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+    }
+}
+
+function editTodo(id) {
+    const todo = state.allTodos.find(t => t.id === id);
+    if (!todo) return;
+
+    // Populate form
+    elements.taskTitle.value = todo.title;
+    elements.taskDescription.value = todo.description || '';
+    elements.taskPriority.value = todo.priority;
+    elements.taskDueDate.value = todo.due_date ? todo.due_date.split('T')[0] : '';
+
+    // Set editing state
+    state.editingId = id;
+    elements.todoForm.dataset.editing = 'true';
+    elements.todoForm.dataset.editingStatus = todo.status;
+
+    // Update UI
+    elements.formTitle.textContent = 'Edit Task';
+    elements.submitBtnText.textContent = 'Update Task';
+    elements.formBadge.textContent = 'Editing';
+    elements.formBadge.style.display = 'inline-flex';
+    elements.cancelBtn.style.display = 'inline-flex';
+
+    // Clear any previous errors
+    clearValidationErrors();
+
+    // Scroll to form smoothly
+    elements.taskTitle.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    elements.taskTitle.focus({ preventScroll: true });
+}
+
+function cancelEdit() {
+    state.editingId = null;
+    elements.todoForm.dataset.editing = 'false';
+    delete elements.todoForm.dataset.editingStatus;
+    elements.formTitle.textContent = 'Add Task';
+    elements.submitBtnText.textContent = 'Add Task';
+    elements.formBadge.style.display = 'none';
+    elements.cancelBtn.style.display = 'none';
+    elements.todoForm.reset();
+    clearValidationErrors();
+}
+
+function confirmDelete(id) {
+    state.deleteTargetId = id;
+    elements.deleteModal.hidden = false;
+    elements.modalConfirm.focus();
+    // Trap focus
+    trapFocus(elements.deleteModal);
+}
+
+async function deleteTodo(id) {
+    const btn = document.querySelector(`.task-card[data-id="${id}"] [data-action="delete"]`);
+    const originalHtml = btn.innerHTML;
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="btn-loader"></span>';
+
+    try {
+        await apiRequest(`/todos/${id}`, { method: 'DELETE' });
+        state.allTodos = state.allTodos.filter(t => t.id !== id);
+        renderAll();
+        showToast('success', 'Task deleted', 'The task has been removed permanently.');
+    } catch (error) {
+        console.error('Error deleting todo:', error);
+        showToast('error', 'Unable to delete task', 'Please try again.');
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+    }
+}
+
+async function createTodoFromForm() {
+    const title = elements.taskTitle.value.trim();
+    const description = elements.taskDescription.value.trim();
+    const priority = elements.taskPriority.value;
+    const dueDate = elements.taskDueDate.value || null;
+
+    // Validate
+    if (!validateForm(title)) return false;
+
+    setSubmitLoading(true);
+
+    try {
+        const result = await apiRequest('/todos', {
+            method: 'POST',
+            body: JSON.stringify({ title, description, priority, due_date: dueDate })
+        });
+        state.allTodos.unshift(result.data);
+        renderAll();
+        showToast('success', 'Task created', 'Your new task has been added.');
+        return true;
+    } catch (error) {
+        console.error('Error creating todo:', error);
+        showToast('error', 'Unable to create task', error.message || 'Please try again.');
+        return false;
+    } finally {
+        setSubmitLoading(false);
+    }
+}
+
+async function updateTodoFromForm(id) {
+    const title = elements.taskTitle.value.trim();
+    const description = elements.taskDescription.value.trim();
+    const priority = elements.taskPriority.value;
+    const dueDate = elements.taskDueDate.value || null;
+    const status = elements.todoForm.dataset.editingStatus || 'pending';
+
+    // Validate
+    if (!validateForm(title)) return false;
+
+    setSubmitLoading(true);
+
+    try {
+        const result = await apiRequest(`/todos/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify({ title, description, priority, status, due_date: dueDate })
+        });
+        state.allTodos = state.allTodos.map(t => t.id === id ? result.data : t);
+        renderAll();
+        showToast('success', 'Task updated', 'Your changes have been saved.');
+        return true;
+    } catch (error) {
+        console.error('Error updating todo:', error);
+        showToast('error', 'Unable to update task', error.message || 'Please try again.');
+        return false;
+    } finally {
+        setSubmitLoading(false);
+    }
+}
+
+// ==========================================================================
+// FORM VALIDATION
+// ==========================================================================
+function validateForm(title) {
+    clearValidationErrors();
+
+    if (!title || title.length < 3) {
+        showFieldError('taskTitle', 'Task title must be at least 3 characters');
+        elements.taskTitle.focus();
+        return false;
+    }
+
+    if (title.length > 200) {
+        showFieldError('taskTitle', 'Task title cannot exceed 200 characters');
+        elements.taskTitle.focus();
+        return false;
+    }
+
+    return true;
+}
+
+function showFieldError(fieldId, message) {
+    const field = document.getElementById(fieldId);
+    const errorEl = document.getElementById(`${fieldId}Error`);
+    field.setAttribute('aria-invalid', 'true');
+    field.classList.add('error');
+    if (errorEl) errorEl.textContent = message;
+}
+
+function clearValidationErrors() {
+    elements.todoForm.querySelectorAll('[aria-invalid="true"]').forEach(el => {
+        el.removeAttribute('aria-invalid');
+        el.classList.remove('error');
+    });
+    elements.todoForm.querySelectorAll('.form-error').forEach(el => {
+        el.textContent = '';
+    });
+}
+
+// ==========================================================================
+// SEARCH & FILTER
+// ==========================================================================
+let searchTimeout = null;
+
+function handleSearch(e) {
+    const term = e.target.value.trim();
+    state.searchTerm = term;
+    elements.searchClear.hidden = !term;
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(() => {
+        renderTasks();
+        renderListMeta();
+    }, 300);
+}
+
+function clearSearch() {
+    elements.searchInput.value = '';
+    state.searchTerm = '';
+    elements.searchClear.hidden = true;
+    renderTasks();
+    renderListMeta();
+    elements.searchInput.focus();
+}
+
+function setStatusFilter(filter) {
+    state.currentFilter = filter;
+    updateFilterButtons('filter-btn--status', filter);
+    renderTasks();
+    renderListMeta();
+}
+
+function setPriorityFilter(filter) {
+    state.currentPriorityFilter = filter;
+    updateFilterButtons('filter-btn--priority', filter);
+    renderTasks();
+    renderListMeta();
+}
+
+function updateFilterButtons(className, activeValue) {
+    document.querySelectorAll(`.${className}`).forEach(btn => {
+        const isActive = btn.dataset[className === 'filter-btn--status' ? 'filter' : 'priority'] === activeValue;
+        btn.classList.toggle('active', isActive);
+        btn.setAttribute('aria-pressed', isActive);
+    });
+}
+
+// ==========================================================================
+// EVENT LISTENERS
+// ==========================================================================
+function setupEventListeners() {
+    // Search
+    elements.searchInput.addEventListener('input', handleSearch);
+    elements.searchClear.addEventListener('click', clearSearch);
+    elements.clearSearchBtn.addEventListener('click', clearSearch);
+
+    // Filters
+    document.querySelectorAll('.filter-btn--status').forEach(btn => {
+        btn.addEventListener('click', () => setStatusFilter(btn.dataset.filter));
+    });
+
+    document.querySelectorAll('.filter-btn--priority').forEach(btn => {
+        btn.addEventListener('click', () => setPriorityFilter(btn.dataset.priority));
+    });
+
+    // Form
+    elements.cancelBtn.addEventListener('click', cancelEdit);
+
+    // Form Submission
+    elements.todoForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const editingId = state.editingId;
+        let success = false;
+
+        if (editingId) {
+            success = await updateTodoFromForm(editingId);
+        } else {
+            success = await createTodoFromForm();
+        }
+
+        if (success) {
+            cancelEdit();
+        }
+    });
+
+    // Modal
+    elements.modalClose.addEventListener('click', closeModal);
+    elements.modalCancel.addEventListener('click', closeModal);
+    elements.modalConfirm.addEventListener('click', () => {
+        if (state.deleteTargetId) {
+            deleteTodo(state.deleteTargetId);
+            closeModal();
+        }
+    });
+
+    // Close modal on overlay click
+    elements.deleteModal.addEventListener('click', (e) => {
+        if (e.target === elements.deleteModal) closeModal();
+    });
+
+    // Close modal on Escape
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !elements.deleteModal.hidden) {
+            closeModal();
+        }
+    });
+
+    // Enter key in search to clear
+    elements.searchInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            elements.searchInput.blur();
+            if (state.searchTerm) clearSearch();
+        }
+    });
+}
+
+function closeModal() {
+    elements.deleteModal.hidden = true;
+    state.deleteTargetId = null;
+    // Return focus to the delete button that opened the modal
+    const deleteBtn = document.querySelector(`.task-card[data-id="${state.deleteTargetId}"] [data-action="delete"]`);
+    if (deleteBtn) deleteBtn.focus();
+}
+
+// Focus trap for modal
+function trapFocus(modal) {
+    const focusableElements = modal.querySelectorAll(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    const firstElement = focusableElements[0];
+    const lastElement = focusableElements[focusableElements.length - 1];
+
+    function handleTab(e) {
+        if (e.key !== 'Tab') return;
+
+        if (e.shiftKey) {
+            if (document.activeElement === firstElement) {
+                e.preventDefault();
+                lastElement.focus();
+            }
+        } else {
+            if (document.activeElement === lastElement) {
+                e.preventDefault();
+                firstElement.focus();
+            }
+        }
+    }
+
+    modal.addEventListener('keydown', handleTab);
+    modal._focusTrap = handleTab;
+}
+
+// ==========================================================================
+// UI HELPERS
+// ==========================================================================
+function setSubmitLoading(loading) {
+    elements.submitBtn.disabled = loading;
+    elements.cancelBtn.disabled = loading;
+    elements.submitBtn.setAttribute('aria-busy', loading);
+}
+
+function setLoading(loading) {
+    state.isLoading = loading;
+    // Could add a global loading indicator here if needed
+}
+
+function animateCount(element, target) {
+    const current = parseInt(element.textContent) || 0;
+    if (current === target) return;
+
+    const duration = 300;
+    const start = performance.now();
+
+    function update(now) {
+        const progress = Math.min((now - start) / duration, 1);
+        const eased = 1 - Math.pow(1 - progress, 3); // ease-out cubic
+        const value = Math.round(current + (target - current) * eased);
+        element.textContent = value;
+        if (progress < 1) requestAnimationFrame(update);
+    }
+
+    requestAnimationFrame(update);
+}
+
+function formatDate(dateString) {
+    const date = new Date(dateString + 'T00:00:00');
+    return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function formatDateFull(dateString) {
+    const date = new Date(dateString + 'T00:00:00');
+    return date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function isOverdue(todo) {
+    if (!todo.due_date || todo.status === 'completed') return false;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const due = new Date(todo.due_date + 'T00:00:00');
+    return due < today;
+}
+
 function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
 }
 
-// Format date from YYYY-MM-DD to DD MMM
-function formatDate(dateString) {
-    const options = { year: 'numeric', month: 'short', day: 'numeric' };
-    return new Date(dateString).toLocaleDateString(undefined, options);
+// ==========================================================================
+// TOAST NOTIFICATIONS
+// ==========================================================================
+function showToast(type, title, message) {
+    const toast = document.createElement('div');
+    toast.className = `toast toast--${type}`;
+    toast.role = 'alert';
+    toast.ariaLive = 'polite';
+
+    const icons = {
+        success: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>',
+        error: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>',
+        warning: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>',
+        info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>'
+    };
+
+    toast.innerHTML = `
+        <span class="toast-icon" aria-hidden="true">${icons[type]}</span>
+        <div class="toast-content">
+            <div class="toast-title">${escapeHtml(title)}</div>
+            <div class="toast-message">${escapeHtml(message)}</div>
+        </div>
+        <button type="button" class="toast-close" aria-label="Dismiss">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+        </button>
+    `;
+
+    toast.querySelector('.toast-close').addEventListener('click', () => hideToast(toast));
+    elements.toastContainer.appendChild(toast);
+
+    // Force reflow then show
+    requestAnimationFrame(() => toast.classList.add('show'));
+
+    // Auto-dismiss
+    setTimeout(() => hideToast(toast), 4000);
 }
 
-// Toggle todo completion
-async function toggleTodo(id) {
-    const btn = document.querySelector(`.todo-card[data-id="${id}"] .btn-complete`);
-    const originalText = btn ? btn.textContent : '';
-    
-    if (btn) {
-        btn.textContent = 'Updating...';
-        btn.disabled = true;
-    }
-    
-    try {
-        const response = await fetch(`${API_BASE}/todos/${id}/complete`, {
-            method: 'PATCH',
-            headers: {
-                'Content-Type': 'application/json'
-            }
-        });
-        
-        if (!response.ok) {
-            throw new Error('Failed to update todo');
-        }
-        
-        const data = await response.json();
-        allTodos = allTodos.map(todo => todo.id === id ? data.data : todo);
-        renderTodos();
-        showSuccess('Task status updated!');
-    } catch (error) {
-        console.error('Error toggling todo:', error);
-        showError('Failed to update task status.');
-    } finally {
-        if (btn) {
-            btn.textContent = originalText;
-            btn.disabled = false;
-        }
-    }
-}
-
-// Edit a todo
-function editTodo(id) {
-    const todo = allTodos.find(t => t.id === id);
-    if (!todo) return;
-    
-    // Pre-fill form with current todo data
-    taskTitle.value = todo.title;
-    taskDescription.value = todo.description || '';
-    taskPriority.value = todo.priority;
-    taskDueDate.value = todo.due_date ? todo.due_date.split('T')[0] : '';
-    
-    // Store the current status for update
-    todoForm.dataset.editingStatus = todo.status;
-    
-    // Set todo ID for update
-    todoForm.dataset.editingId = id;
-    
-    // Switch UI to edit mode
-    setEditMode(true);
-    
-    // Scroll to form
-    taskTitle.scrollIntoView({ behavior: 'smooth' });
-}
-
-// Cancel edit mode
-function cancelEdit() {
-    todoForm.reset();
-    delete todoForm.dataset.editingId;
-    delete todoForm.dataset.editingStatus;
-    setEditMode(false);
-}
-
-// Set form to edit mode or add mode
-function setEditMode(isEditing) {
-    if (isEditing) {
-        formTitle.textContent = '✎ EDIT TASK';
-        submitBtn.textContent = 'Update Task';
-        cancelBtn.style.display = 'inline-block';
-    } else {
-        formTitle.textContent = '+ Add Task';
-        submitBtn.textContent = '+ Add Task';
-        cancelBtn.style.display = 'none';
-    }
-}
-
-// Delete a todo
-async function deleteTodo(id) {
-    if (!confirm('Are you sure you want to delete this task?')) {
-        return;
-    }
-    
-    const btn = document.querySelector(`.todo-card[data-id="${id}"] .btn-delete`);
-    const originalText = btn ? btn.textContent : '';
-    
-    if (btn) {
-        btn.textContent = 'Deleting...';
-        btn.disabled = true;
-    }
-    
-    try {
-        const response = await fetch(`${API_BASE}/todos/${id}`, {
-            method: 'DELETE',
-            headers: {
-                'Content-Type': 'application/json'
-            }
-        });
-        
-        if (!response.ok) {
-            throw new Error('Failed to delete todo');
-        }
-        
-        allTodos = allTodos.filter(todo => todo.id !== id);
-        renderTodos();
-        showSuccess('Task deleted successfully!');
-    } catch (error) {
-        console.error('Error deleting todo:', error);
-        showError('Failed to delete task.');
-    } finally {
-        if (btn) {
-            btn.textContent = originalText;
-            btn.disabled = false;
-        }
-    }
-}
-
-// Search todos
-function searchTodos() {
-    const searchTerm = searchInput.value.trim().toLowerCase();
-    let filteredTodos = [...allTodos];
-    
-    if (searchTerm) {
-        filteredTodos = filteredTodos.filter(todo => 
-            todo.title.toLowerCase().includes(searchTerm) || 
-            (todo.description && todo.description.toLowerCase().includes(searchTerm))
-        );
-    }
-    
-    // Apply filters
-    if (currentFilter !== 'all') {
-        filteredTodos = filteredTodos.filter(todo => todo.status === currentFilter);
-    }
-    
-    if (currentPriorityFilter !== 'all') {
-        filteredTodos = filteredTodos.filter(todo => todo.priority === currentPriorityFilter);
-    }
-    
-    todoList.innerHTML = '';
-    
-    if (filteredTodos.length === 0) {
-        emptyState.style.display = 'block';
-        emptyState.textContent = 'No tasks found matching your search.';
-        return;
-    }
-    
-    emptyState.style.display = 'none';
-    
-    filteredTodos.forEach(todo => {
-        const todoElement = createTodoElement(todo);
-        todoList.appendChild(todoElement);
-    });
-    
-    updateStatistics();
-}
-
-// Filter todos by status
-function filterTodos(status) {
-    // Update active filter button
-    document.querySelectorAll('.filter-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.filter === status);
-    });
-    
-    currentFilter = status;
-    renderTodos();
-    updateStatistics();
-}
-
-// Filter todos by priority
-function filterPriorities(priority) {
-    // Update active priority button
-    document.querySelectorAll('.priority-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.priority === priority);
-    });
-    
-    currentPriorityFilter = priority;
-    renderTodos();
-    updateStatistics();
-}
-
-// Update statistics display
-function updateStatistics() {
-    const total = allTodos.length;
-    const pending = allTodos.filter(todo => todo.status === 'pending').length;
-    const completed = allTodos.filter(todo => todo.status === 'completed').length;
-    const highPriority = allTodos.filter(todo => todo.priority === 'high').length;
-    
-    totalStats.textContent = total;
-    pendingStats.textContent = pending;
-    completedStats.textContent = completed;
-    highPriorityStats.textContent = highPriority;
-}
-
-// Show error message
-function showError(message) {
-    // Create error toast or display
-    const errorDiv = document.createElement('div');
-    errorDiv.className = 'error-toast';
-    errorDiv.textContent = message;
-    errorDiv.style.position = 'fixed';
-    errorDiv.style.bottom = '20px';
-    errorDiv.style.left = '50%';
-    errorDiv.style.transform = 'translateX(-50%)';
-    errorDiv.style.background = '#e53e3e';
-    errorDiv.style.color = 'white';
-    errorDiv.style.padding = '10px 20px';
-    errorDiv.style.borderRadius = '6px';
-    errorDiv.style.zIndex = '1000';
-    
-    document.body.appendChild(errorDiv);
-    
-    setTimeout(() => {
-        errorDiv.remove();
-    }, 3000);
-}
-
-// Show success message
-function showSuccess(message) {
-    const successDiv = document.createElement('div');
-    successDiv.className = 'success-toast';
-    successDiv.textContent = message;
-    successDiv.style.position = 'fixed';
-    successDiv.style.bottom = '20px';
-    successDiv.style.left = '50%';
-    successDiv.style.transform = 'translateX(-50%)';
-    successDiv.style.background = '#42b983';
-    successDiv.style.color = 'white';
-    successDiv.style.padding = '10px 20px';
-    successDiv.style.borderRadius = '6px';
-    successDiv.style.zIndex = '1000';
-    
-    document.body.appendChild(successDiv);
-    
-    setTimeout(() => {
-        successDiv.remove();
-    }, 3000);
-}
-
-// Setup all event listeners
-function setupEventListeners() {
-    // Form submission
-    todoForm.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        
-        const editingId = todoForm.dataset.editingId;
-        let success = false;
-        
-        if (editingId) {
-            // Update existing todo
-            success = await updateTodoFromForm(editingId);
-        } else {
-            // Create new todo
-            success = await createTodoFromForm();
-        }
-        
-        // Only reset form and UI on success
-        if (success) {
-            todoForm.reset();
-            delete todoForm.dataset.editingId;
-            delete todoForm.dataset.editingStatus;
-            setEditMode(false);
-        }
-        // On failure, keep form in edit mode with user's changes
-    });
-    
-    // Cancel button
-    cancelBtn.addEventListener('click', cancelEdit);
-    
-    // Search input - debounced
-    let searchTimeout;
-    searchInput.addEventListener('input', (e) => {
-        clearTimeout(searchTimeout);
-        searchTimeout = setTimeout(searchTodos, 300);
-    });
-    
-    // Filter buttons
-    document.querySelectorAll('.filter-btn[data-filter]').forEach(btn => {
-        btn.addEventListener('click', () => {
-            filterTodos(btn.dataset.filter);
-        });
-    });
-    
-    document.querySelectorAll('.priority-btn[data-priority]').forEach(btn => {
-        btn.addEventListener('click', () => {
-            filterPriorities(btn.dataset.priority);
-        });
-    });
-}
-
-// Create todo from form
-async function createTodoFromForm() {
-    const title = taskTitle.value.trim();
-    const description = taskDescription.value.trim();
-    const priority = taskPriority.value;
-    const dueDate = taskDueDate.value;
-    
-    if (!title || title.length < 3) {
-        showError('Task title must be at least 3 characters');
-        return false;
-    }
-    
-    // Set loading state
-    setSubmitLoading(true);
-    
-    // Debug: log the data being sent
-    console.log('Creating todo with data:', { title, description, priority, due_date: dueDate || null });
-    
-    try {
-        const response = await fetch(`${API_BASE}/todos`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                title,
-                description: description || '',  // Ensure description is never null
-                priority,
-                due_date: dueDate || null
-            })
-        });
-        
-        if (!response.ok) {
-            const errorData = await response.json();
-            console.error('API error response:', errorData);
-            throw new Error(errorData.message || 'Failed to create todo');
-        }
-        
-        const data = await response.json();
-        console.log('API response:', data);
-        allTodos.push(data.data);
-        renderTodos();
-        showSuccess('Task created successfully!');
-        return true;
-    } catch (error) {
-        console.error('Error creating todo:', error);
-        showError(error.message || 'Failed to create task.');
-        return false;
-    } finally {
-        setSubmitLoading(false);
-    }
-}
-
-// Update todo from form
-async function updateTodoFromForm(id) {
-    const title = taskTitle.value.trim();
-    const description = taskDescription.value.trim();
-    const priority = taskPriority.value;
-    const dueDate = taskDueDate.value;
-    const status = todoForm.dataset.editingStatus || 'pending';
-    
-    if (!title || title.length < 3) {
-        showError('Task title must be at least 3 characters');
-        return false;
-    }
-    
-    // Set loading state
-    setSubmitLoading(true);
-    
-    try {
-        const response = await fetch(`${API_BASE}/todos/${id}`, {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                title,
-                description,
-                priority,
-                status,
-                due_date: dueDate || null
-            })
-        });
-        
-        if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.message || 'Failed to update todo');
-        }
-        
-        const data = await response.json();
-        allTodos = allTodos.map(todo => todo.id === id ? data.data : todo);
-        renderTodos();
-        showSuccess('Task updated successfully!');
-        return true;
-    } catch (error) {
-        console.error('Error updating todo:', error);
-        showError(error.message || 'Failed to update task.');
-        return false;
-    } finally {
-        setSubmitLoading(false);
-    }
-}
-
-// Set submit button loading state
-function setSubmitLoading(isLoading) {
-    if (isLoading) {
-        submitBtn.textContent = 'Updating...';
-        submitBtn.disabled = true;
-        submitBtn.style.opacity = '0.7';
-        submitBtn.style.cursor = 'not-allowed';
-        if (cancelBtn) cancelBtn.disabled = true;
-    } else {
-        const editingId = todoForm.dataset.editingId;
-        submitBtn.textContent = editingId ? 'Update Task' : '+ Add Task';
-        submitBtn.disabled = false;
-        submitBtn.style.opacity = '1';
-        submitBtn.style.cursor = 'pointer';
-        if (cancelBtn) cancelBtn.disabled = false;
-    }
+function hideToast(toast) {
+    toast.classList.add('hiding');
+    toast.addEventListener('animationend', () => toast.remove());
 }
